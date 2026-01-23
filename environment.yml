@@ -12,6 +12,8 @@ dependencies:
   - openpyxl
   - scipy
   - seaborn
+  - streamlit
+  - plotly
   - pip
   - pip:
     - arch
