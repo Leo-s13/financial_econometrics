@@ -627,10 +627,209 @@ def show_stylized_facts(stock_data):
         </div>
         """, unsafe_allow_html=True)
 
+        
 def show_risk_measures(stock_data):
     st.header("🛡️ Risk Measure Estimation")
-    st.info("Calculation of Value at Risk (VaR) and Expected Shortfall (ES).")
+    st.markdown("""
+    Estimate **Value at Risk (VaR)** and **Expected Shortfall (ES)** using:
+    1.  **Historical Simulation:** Non-Parametric (Past Data).
+    2.  **GARCH Models:** Parametric (Volatility Forecasting).
+    """)
 
+    # Create Tabs
+    risk_tabs = st.tabs(["1. Historical Simulation", "2. GARCH Models (Parametric)"])
+
+    # ==========================================
+    # TAB 1: HISTORICAL SIMULATION
+    # ==========================================
+    with risk_tabs[0]:
+        st.subheader("Historical Simulation (HS)")
+        
+        c1, c2 = st.columns(2)
+        with c1:
+            hs_conf = st.slider("HS Confidence Level (%)", 90.0, 99.9, 95.0, 0.1, key="hs_conf")
+        with c2:
+            hs_window = st.number_input("Rolling Window (Days)", 100, 1000, 250, 50, key="hs_win")
+        
+        hs_alpha = 1 - (hs_conf / 100.0)
+
+        fig_hs = make_subplots(rows=3, cols=1, subplot_titles=list(stock_data.keys()), vertical_spacing=0.08, shared_xaxes=True)
+        
+        for i, (name, df) in enumerate(stock_data.items()):
+            # HS Calculation
+            roll_var = df['log_return'].rolling(window=hs_window).quantile(hs_alpha).dropna()
+            
+            # Simple ES calculation
+            def calc_es(x):
+                cutoff = np.percentile(x, hs_alpha * 100)
+                return x[x <= cutoff].mean()
+            
+            # Note: Applying on large datasets can be slow; optimized for this scale
+            roll_es = df['log_return'].rolling(window=hs_window).apply(calc_es, raw=True).dropna()
+            
+            common_idx = roll_var.index
+            
+            fig_hs.add_trace(go.Scatter(x=df.loc[common_idx, 'date'], y=df.loc[common_idx, 'log_return'], 
+                                        mode='lines', line=dict(color='rgba(0,0,255,0.15)', width=1), name=f'{name} Returns'), row=i+1, col=1)
+            fig_hs.add_trace(go.Scatter(x=df.loc[common_idx, 'date'], y=roll_var, 
+                                        mode='lines', line=dict(color='#EF553B', width=1.5), name='VaR (HS)'), row=i+1, col=1)
+            fig_hs.add_trace(go.Scatter(x=df.loc[common_idx, 'date'], y=roll_es, 
+                                        mode='lines', line=dict(color='#FFA15A', width=1.5, dash='dot'), name='ES (HS)'), row=i+1, col=1)
+
+        fig_hs.update_layout(height=1200, title_text="Historical Simulation Risk Measures", showlegend=False)
+        st.plotly_chart(fig_hs, use_container_width=True)
+
+    # ==========================================
+    # TAB 2: GARCH MODELS
+    # ==========================================
+    with risk_tabs[1]:
+        st.subheader("GARCH Volatility Modeling")
+        
+        st.info("""
+        **💡 Configuration Guide:**
+        * **Dist:** Use **Student's t** or **Skewed Student's t** to handle heavy tails.
+        * **Model:** Use **GJR-GARCH** or **EGARCH** to handle the Leverage Effect.
+        """)
+
+        # --- 1. Per-Company Configuration ---
+        configs = {}
+        cols = st.columns(3)
+        
+        # Maps for arch package
+        vol_map = {"GARCH": "Garch", "EGARCH": "EGARCH", "GJR-GARCH": "Garch"} 
+        # Note: 'skewt' usually requires 'nu' and 'lambda'
+        dist_map = {"Normal": "normal", "Student's t": "t", "Skewed Student's t": "skewt"}
+
+        for i, (name, df) in enumerate(stock_data.items()):
+            with cols[i]:
+                st.markdown(f"**{name}** Settings")
+                # Default selection logic: GS (GJR/Skewt), BAC (GJR/t), MET (GJR/t)
+                model_t = st.selectbox(f"Model", ["GJR-GARCH", "EGARCH", "GARCH"], index=0, key=f"m_{name}")
+                dist_t = st.selectbox(f"Dist", ["Student's t", "Skewed Student's t", "Normal"], index=1, key=f"d_{name}")
+                
+                c_p, c_q = st.columns(2)
+                with c_p: p = st.number_input(f"p", 1, 5, 1, key=f"p_{name}")
+                with c_q: q = st.number_input(f"q", 1, 5, 1, key=f"q_{name}")
+                
+                configs[name] = {"model": model_t, "dist": dist_t, "p": p, "q": q}
+
+        st.divider()
+        garch_conf = st.slider("GARCH VaR Confidence (%)", 90.0, 99.9, 95.0, 0.1)
+        garch_alpha = 1 - (garch_conf / 100.0)
+
+        # Button to trigger calculation
+        if st.button("Estimate GARCH Models"):
+            
+            fig_garch = make_subplots(rows=3, cols=1, subplot_titles=list(stock_data.keys()), 
+                                      vertical_spacing=0.08, shared_xaxes=True)
+            
+            summary_stats = []
+            model_outputs = {} # Store text summaries
+
+            with st.spinner("Fitting models... this may take a moment"):
+                for i, (name, df) in enumerate(stock_data.items()):
+                    cfg = configs[name]
+                    
+                    # 1. Scale Returns (Critical for GARCH convergence)
+                    returns = df['log_return'] * 100 
+                    
+                    # 2. Configure Model
+                    dist_code = dist_map[cfg['dist']]
+                    
+                    if cfg['model'] == "GJR-GARCH":
+                        # In 'arch', GJR is GARCH with o=1
+                        model = arch_model(returns, vol='Garch', p=cfg['p'], o=1, q=cfg['q'], dist=dist_code)
+                    elif cfg['model'] == "EGARCH":
+                        model = arch_model(returns, vol='EGARCH', p=cfg['p'], q=cfg['q'], dist=dist_code)
+                    else: # Standard GARCH
+                        model = arch_model(returns, vol='Garch', p=cfg['p'], o=0, q=cfg['q'], dist=dist_code)
+                    
+                    # 3. Fit Model
+                    try:
+                        res = model.fit(disp='off')
+                        model_outputs[name] = res.summary()
+                    except Exception as e:
+                        st.error(f"Fit failed for {name}: {e}")
+                        continue
+                    
+                    # 4. Extract Parameters Safely (Fix for KeyError)
+                    params = res.params
+                    
+                    # Get Conditional Volatility and Mean
+                    cond_vol = res.conditional_volatility / 100 # Rescale back
+                    mu = params.get('mu', 0.0) / 100
+                    
+                    # 5. Calculate Quantile (q) based on Distribution
+                    if cfg['dist'] == "Normal":
+                        q_stat = stats.norm.ppf(garch_alpha)
+                        es_stat = -stats.norm.pdf(stats.norm.ppf(garch_alpha)) / garch_alpha
+                        
+                    elif "Student" in cfg['dist']:
+                        # Robustly fetch degrees of freedom
+                        # 'skewt' uses 'nu' and 'lambda'. 't' uses 'nu'. 
+                        # 'ged' uses 'nu' or 'eta'.
+                        nu = params.get('nu', params.get('eta', 5.0)) # Fallback to 5 if missing
+                        
+                        if "Skewed" in cfg['dist']:
+                            lambda_ = params.get('lambda', 0.0) # Fallback to 0 (symmetric)
+                            # Pass BOTH parameters to the distribution's ppf
+                            try:
+                                q_stat = model.distribution.ppf(garch_alpha, [nu, lambda_])
+                            except Exception:
+                                # Fallback if library version differs
+                                q_stat = stats.t.ppf(garch_alpha, df=nu) 
+                            
+                            # Simplified ES for visualization (Exact Skewed t ES is complex)
+                            es_stat = q_stat * 1.15 
+                        else:
+                            # Standard Student's t
+                            q_stat = stats.t.ppf(garch_alpha, df=nu)
+                            
+                            # Analytical ES for t-dist
+                            x_q = stats.t.ppf(garch_alpha, df=nu)
+                            pdf_q = stats.t.pdf(x_q, df=nu)
+                            es_stat = -((nu + x_q**2) / (nu - 1)) * (pdf_q / garch_alpha)
+
+                    # 6. Compute Risk Measures
+                    var_garch = mu + cond_vol * q_stat
+                    es_garch = mu + cond_vol * es_stat
+
+                    # 7. Plotting
+                    fig_garch.add_trace(go.Scatter(x=df['date'], y=df['log_return'], 
+                        mode='lines', line=dict(color='rgba(0,0,255,0.15)', width=1), name=f"{name} Ret"), row=i+1, col=1)
+                    
+                    fig_garch.add_trace(go.Scatter(x=df['date'], y=var_garch, 
+                        mode='lines', line=dict(color='#00CC96', width=1.5), name=f"VaR"), row=i+1, col=1)
+                    
+                    fig_garch.add_trace(go.Scatter(x=df['date'], y=es_garch, 
+                        mode='lines', line=dict(color='#AB63FA', width=1.5, dash='dot'), name=f"ES"), row=i+1, col=1)
+
+                    # Backtesting
+                    breaches = df[df['log_return'] < var_garch]
+                    breach_pct = len(breaches) / len(df) * 100
+                    
+                    summary_stats.append({
+                        "Company": name,
+                        "Config": f"{cfg['model']} / {cfg['dist']}",
+                        "AIC": f"{res.aic:.1f}",
+                        "Target %": f"{garch_alpha*100:.1f}%",
+                        "Breach %": f"{breach_pct:.2f}%"
+                    })
+
+            fig_garch.update_layout(height=1200, title_text="Parametric Risk Estimation (GARCH)", showlegend=False)
+            st.plotly_chart(fig_garch, use_container_width=True)
+            
+            # --- Results Tables ---
+            st.subheader("Model Fit & Backtest Results")
+            st.table(pd.DataFrame(summary_stats).set_index("Company"))
+            
+            st.markdown("### 📋 Full Model Outputs")
+            st.caption("Inspect p-values and coefficients (alpha, beta, nu, lambda) below.")
+            
+            # Display summary tables in expanders
+            for name, summary in model_outputs.items():
+                with st.expander(f"View Output for {name}"):
+                    st.code(summary)
 def show_forecasting(stock_data):
     st.header("🔮 Volatility Forecasting")
     st.info("Predicting future volatility using GARCH-family models.")
