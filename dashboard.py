@@ -1830,7 +1830,7 @@ The observed patterns align with major historical events:
 
 ---
 
-"""
+""")
 
 
 
