@@ -1786,9 +1786,10 @@ def show_forecasting(stock_data):
             st.dataframe(results_df)
                 
     st.markdown("""
-    #Interpretation and Notes:
-
-    ## Evolution of Market Risk Over Time
+                ---
+    ## Interpretation and Notes:
+---
+    ### Evolution of Market Risk Over Time
 
     All three time series exhibit **time-varying behavior** that reflects changing market conditions:
 
@@ -1796,32 +1797,32 @@ def show_forecasting(stock_data):
     - **Calm Periods**: More stable and lower volatility estimates during normal market conditions
     - **Business Cycles**: The alternating pattern reflects the dynamic nature of financial markets
 
-    ## Impact of Estimation Window Size
+    ### Impact of Estimation Window Size
 
     The choice of estimation window affects the results as follows:
 
-    ### Smaller Windows (e.g., 250 observations)
+    #### Smaller Windows (e.g., 250 observations)
     - Produce more **volatile estimates**
     - **Quickly adapt** to regime changes and recent market conditions
     - Higher responsiveness but less stability
 
-    ### Larger Windows (e.g., 500-1000 observations)
+    #### Larger Windows (e.g., 500-1000 observations)
     - Generate **smoother trajectories**
     - **Delayed response** to structural breaks
     - Greater stability but slower adaptation
 
     This trade-off explains why parameters estimated during one market regime may poorly predict risk in subsequent periods, particularly when transitioning from calm to stress conditions. Therefore doing forecasts on the whole sample with fixed parameters (as above) may not capture evolving risk dynamics effectively.
 
-    ## Comparison Across the three Institutions
+    ### Comparison Across the three Institutions
 
-    ### During Systemic Crises
+    #### During Systemic Crises
     - Systematic risk increases across the board regardless of business models
     - when there is trouble all are affected
 
-    ### During Normal Periods
+    #### During Normal Periods
     - Each institution type exhibits similar baseline volatility levels. A deeper analysis is in the Overview tab
 
-    ## Consistency with Past Events
+    ### Consistency with Past Events
 
     The observed patterns align with major historical events:
     - Sharp increases during the 2008 financial crisis
