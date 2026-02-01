@@ -1786,9 +1786,8 @@ def show_forecasting(stock_data):
             st.dataframe(results_df)
                 
     st.markdown("""
-                ---
+
     ## Interpretation and Notes:
----
     ### Evolution of Market Risk Over Time
 
     All three time series exhibit **time-varying behavior** that reflects changing market conditions:
