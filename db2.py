@@ -7,6 +7,16 @@ from plotly.subplots import make_subplots
 import scipy.stats as stats
 from arch import arch_model
 from statsmodels.tsa.stattools import acf, adfuller
+from scipy.integrate import quad
+import warnings
+import time
+
+from arch.univariate import (
+    ConstantMean, GARCH, EGARCH, EWMAVariance, 
+    Normal, StudentsT, SkewStudent, GeneralizedError
+)
+import statsmodels.api as sm
+from statsmodels.tsa.stattools import acf
 
 # --- 1. Configuration & Style ---
 st.set_page_config(
@@ -33,18 +43,8 @@ st.markdown("""
 # --- 2. Data Loading ---
 @st.cache_data
 def load_data_from_path():
-    try:
-        data = pd.read_excel('data/prices.xlsx')
-    except Exception:
-        # Fallback for testing purposes if file isn't present
-        dates = pd.date_range(start="2007-01-01", periods=1000, freq="B")
-        stocks = {}
-        for name in ["Goldman Sachs", "Bank of America", "Metlife"]:
-            price = 100 + np.cumsum(np.random.randn(1000))
-            df = pd.DataFrame({'date': dates, 'price': price})
-            df['log_return'] = np.log(df['price']).diff()
-            stocks[name] = df.dropna()
-        return stocks
+    data = pd.read_excel('data/prices.xlsx')
+        
 
     stocks = {}
     mappings = [("Goldman Sachs", 0, 2), ("Bank of America", 2, 4), ("Metlife", 4, 6)]
@@ -74,7 +74,7 @@ def show_overview(stock_data):
         fig_price.add_trace(go.Scatter(x=df['date'], y=df['price'], name=name, line=dict(color=colors[name])))
     
     fig_price.update_layout(xaxis_title="Date", yaxis_title="Price", hovermode="x unified", height=500)
-    st.plotly_chart(fig_price, use_container_width=True)
+    st.plotly_chart(fig_price, width='stretch')
 
     # --- Log Returns Subplots ---
     st.subheader("Log Returns Analysis")
@@ -87,15 +87,15 @@ def show_overview(stock_data):
         )
     
     fig_returns.update_layout(height=700, showlegend=False)
-    st.plotly_chart(fig_returns, use_container_width=True)
+    st.plotly_chart(fig_returns, width='stretch')
 
     # --- Interpretation ---
     st.markdown("""
     <div class="interpretation-box">
     <strong>Analysis:</strong><br>
-    As expected the raw price data exhibits clear non-stationarity for all three companies. 
+    As expected the raw price data visually exhibits clear non-stationarity for all three companies. 
     In the plots of the price data we can see clear differences between Goldman Sachs and the other two companies. 
-    While Bank of America and Metlife show a long lasting downward trend during the financial crisis of 2008, 
+    While Bank of America and Metlife show a long lasting downward trend following the financial crisis of 2008, 
     Goldman Sachs seems to recover more quickly. This is likely due to the fact that Goldman Sachs is a 
     broker-dealer and investment bank, while Bank of America is a depository bank and Metlife is an insurance company. 
     Broker-dealers and investment banks are less exposed to credit risk than depository banks and insurance companies, 
@@ -159,6 +159,10 @@ def show_stylized_facts(stock_data):
         (Goldman Sachs, Bank of America, and Metlife) are <strong>stationary</strong>. 
         The p-values are significantly below the 0.05 threshold, allowing us to reject the null hypothesis of a unit root.
         <br><br>
+        Prices are usually non‑stationary, but returns are stationary in second order (constant mean and variance, stable autocovariance function).
+        Model implication:
+        We will work with returns not prices.
+        <br><br>
         Returns are usually stationary because they represent <em>changes</em> in prices, effectively removing the long-run 
         growth and inflation trends present in raw price levels. Under market efficiency, shocks have temporary effects, 
         meaning the series fluctuates around a stable mean—a vital requirement for reliable econometric forecasting.
@@ -189,7 +193,7 @@ def show_stylized_facts(stock_data):
 
         fig_dens.update_layout(title="Empirical Density vs. Gaussian Reference",
                               xaxis_title="Log Return", yaxis_title="Density", height=500)
-        st.plotly_chart(fig_dens, use_container_width=True)
+        st.plotly_chart(fig_dens, width='stretch')
 
         # 2. QQ Plots (Side-by-Side)
         st.subheader("Q-Q Plots (Theoretical Normal vs. Observed)")
@@ -207,7 +211,7 @@ def show_stylized_facts(stock_data):
             
             fig_qq.update_layout(title=f"Q-Q: {name}", showlegend=False, height=350,
                                 margin=dict(l=20, r=20, t=40, b=20))
-            qq_cols[i].plotly_chart(fig_qq, use_container_width=True)
+            qq_cols[i].plotly_chart(fig_qq, width='stretch')
 
         # 3. Kurtosis Metrics & Comparison
         st.markdown("---")
@@ -228,7 +232,7 @@ def show_stylized_facts(stock_data):
         with m_col2:
             fig_kurt = px.bar(kurt_df, x="Company", y="Excess Kurtosis", color="Company",
                              color_discrete_map=colors, title="Leptokurtosis (Fat Tail Intensity)")
-            st.plotly_chart(fig_kurt, use_container_width=True)
+            st.plotly_chart(fig_kurt, width='stretch')
 
         # Interpretation Box
         st.markdown(f"""
@@ -240,8 +244,7 @@ def show_stylized_facts(stock_data):
         <br><br>
         <strong>Key Insight:</strong> Bank of America shows the highest excess kurtosis ({kurt_df.iloc[1]['Excess Kurtosis']}). 
         As a highly leveraged depository institution, it is historically more sensitive to "black swan" shocks. 
-        This suggests that standard VaR models assuming normality would <em>disastrously underestimate</em> risk. 
-        Advanced modeling using <strong>Student-t distributions</strong> or <strong>Extreme Value Theory (EVT)</strong> is required.
+        This suggests that standard VaR models assuming normality would <em>disastrously underestimate</em> risk.
         </div>
         """, unsafe_allow_html=True)
 
@@ -279,7 +282,7 @@ def show_stylized_facts(stock_data):
                              title="Measured Skewness by Institution")
             # Add a zero line
             fig_skew.add_hline(y=0, line_dash="dash", line_color="black")
-            st.plotly_chart(fig_skew, use_container_width=True)
+            st.plotly_chart(fig_skew, width='stretch')
 
         # 2. Visualizing the "Tails"
         st.subheader("Tail Comparison (Box Plot)")
@@ -290,10 +293,9 @@ def show_stylized_facts(stock_data):
         
         fig_box.update_layout(title="Box Plot: Identifying Asymmetric Outliers", 
                              yaxis_title="Log Returns", height=500)
-        st.plotly_chart(fig_box, use_container_width=True)
+        st.plotly_chart(fig_box, width='stretch')
 
         
-
 
 
         # 3. Interpretation Box
@@ -307,13 +309,22 @@ def show_stylized_facts(stock_data):
             <li><strong>Goldman Sachs ({skew_results[0]['Skewness']}):</strong> An anomaly with <strong>positive skewness</strong>. This suggests a "Long Volatility" profile. As a broker-dealer, Goldman often benefits from market dislocations through trading and market-making, allowing them to capture large positive returns during periods of high activity.</li>
         </ul>
         The Z-test confirms that these asymmetries are statistically significant and not due to random noise.
+        This is the leverage effect: negative returns are followed by larger increases in volatility than positive returns of the same size
+        <br><br>
+        <strong>Implications for our models:</strong> Plain GARCH(1,1) has a symmetric variance equation. Therefore wit MetLife and Bank of America we should fit
+        an asymmetric GARCH model (GJR or EGARCH) with possibly skewed t innovations, not just symmetric GARCH(1,1) with Normal.
+        <br>
+        Goldman Sachs exhibits significantly positive skewness, unlike the other two institutions. 
+        Since plain GARCH with symmetric innovations cannot reproduce this right skewed unconditional distribution, it is best to model GS 
+        with an asymmetric GARCH variance equation to capture the leverage effect and a skewed innovation distribution (skewed t) 
+        to match the empirical positive skewness.
         </div>
         """, unsafe_allow_html=True)
 
     # --- 4. Absence of Autocorrelations ---
     with tabs[3]:
         st.subheader("Autocorrelation Function (ACF) - Log Returns")
-        st.write("Vertical stacking provides a clearer view of the noise floor across assets.")
+        st.write("Lags k ≥ 1 at daily frequency.")
 
         lags = 40
         for name, df in stock_data.items():
@@ -343,7 +354,7 @@ def show_stylized_facts(stock_data):
                 margin=dict(l=20, r=20, t=40, b=20),
                 yaxis=dict(range=[-0.12, 0.12])
             )
-            st.plotly_chart(fig_acf, use_container_width=True)
+            st.plotly_chart(fig_acf, width='stretch')
 
         
 
@@ -351,9 +362,11 @@ def show_stylized_facts(stock_data):
         st.markdown(f"""
         <div class="interpretation-box">
         <strong>Interpretation:</strong><br>
-        Consistent with the <strong>Efficient Market Hypothesis (EMH)</strong>, all three assets exhibit negligible 
+        Consistent with the <strong>Efficient Market Hypothesis</strong>, all three assets exhibit negligible 
         autocorrelations across all 40 lags. Most correlation coefficients fall within the 95% confidence 
         interval (the shaded region), indicating that they are not statistically different from zero.
+        <br><br>
+        For the models we will later introduce this means we can focus from mean prediction to variance prediction and specify a very simple conditional mean.
         <br><br>
         <strong>Economic Significance:</strong> 
         This confirms the "Absence of Autocorrelations" stylized fact. It implies that past price movements 
@@ -401,7 +414,7 @@ def show_stylized_facts(stock_data):
                     margin=dict(l=20, r=20, t=40, b=20),
                     yaxis=dict(range=[-0.05, 0.4]) # Adjusted range to show the persistent positive decay
                 )
-                st.plotly_chart(fig_sq, use_container_width=True)
+                st.plotly_chart(fig_sq, width='stretch')
 
             
 
@@ -410,15 +423,9 @@ def show_stylized_facts(stock_data):
             <strong>Interpretation:</strong><br>
             The autocorrelation plots for the squared log returns of Goldman Sachs, Bank of America, and Metlife 
             show coefficients that remain positive and often stay above the significance threshold for many lags. 
-            However, they do not exhibit the extremely high, non-decaying persistence often found in 
-            "long memory" processes (like fractionally integrated series).
             <br><br>
-            <strong>Key Insight:</strong> This indicates that while there is <strong>short-to-medium range 
-            dependence</strong> in volatility, it does not necessarily constitute "long memory" in the 
-            strict econometric sense. Volatility shocks are somewhat persistent—confirming that yesterday's 
-            volatility influences today's—but these shocks eventually dissipate. This aligns with standard 
-            <strong>GARCH-type behavior</strong>, where volatility is mean-reverting rather than 
-            infinitely persistent.
+            The persistent positive ACF of squared returns is empirical evidence for the ARCH effect and motivates
+            fitting ARCH/GARCH volatility models later on.
             </div>
             """, unsafe_allow_html=True)
 
@@ -451,7 +458,7 @@ def show_stylized_facts(stock_data):
                 margin=dict(l=20, r=20, t=40, b=20),
                 showlegend=False
             )
-            st.plotly_chart(fig_clust, use_container_width=True)
+            st.plotly_chart(fig_clust, width='stretch')
 
         
 
@@ -538,7 +545,7 @@ def show_stylized_facts(stock_data):
             height=500,
             barmode='overlay'
         )
-        st.plotly_chart(fig_norm, use_container_width=True)
+        st.plotly_chart(fig_norm, width='stretch')
 
         
 
@@ -552,11 +559,8 @@ def show_stylized_facts(stock_data):
         <strong>Modeling Consequence:</strong>
         Because the data is not normal, 
         standard OLS regressions or simple variance-covariance VaR models are mathematically invalid. 
-        This empirically justifies our use of:
-        <ul>
-            <li><strong>GARCH Models:</strong> To handle the non-constant variance (volatility clustering).</li>
-            <li><strong>Non-Normal Innovations:</strong> Using Student-t or GED distributions to capture the 
-            peakedness and fat tails that the Gaussian curve ignores.</li>
+        This again empirically justifies our use of GARCH Models to handle the non-constant variance (volatility clustering) 
+        and non-Normal innovations to capture the fat tails that the Gaussian curve ignores.</li>
         </ul>
         While "Aggregational Gaussianity" implies these returns might look normal over months or years, at a daily 
         frequency, the market is definitively non-Gaussian.
@@ -599,7 +603,7 @@ def show_stylized_facts(stock_data):
             fig_lev.update_layout(height=400)
             
             with cols[i]:
-                st.plotly_chart(fig_lev, use_container_width=True)
+                st.plotly_chart(fig_lev, width='stretch')
 
         # Summary Metrics
         st.markdown("---")
@@ -617,225 +621,1180 @@ def show_stylized_facts(stock_data):
         <strong>Economic Significance:</strong>
         <ul>
             <li><strong>Risk Premium:</strong> This suggests that investors demand a higher risk premium following market 
-            declines, as the uncertainty (volatility) of future prices increases.</li>
-            <li><strong>Financial Leverage:</strong> The classical explanation is that as a firm's stock price falls, 
+            declines, as the uncertainty of future prices increases.</li>
+            <li><strong>Financial Leverage:</strong> One explanation can be, that as a firm's stock price falls, 
             its debt-to-equity ratio increases, making the firm riskier and increasing the volatility of its equity.</li>
-            <li><strong>Asymmetric GARCH:</strong> This result empirically justifies the use of advanced models like 
-            <strong>EGARCH</strong> or <strong>GJR-GARCH</strong>, which allow for different volatility responses 
-            depending on the sign of the previous return.</li>
+        <br>   
+        This further leads us towards using asymmetric GARCH (GJR‑GARCH, EGARCH) or skewed innovations in mopdelling.
+        This is so our models will be able to account, that negative shocks have a different impact than positive ones.
         </ul>
         </div>
         """, unsafe_allow_html=True)
 
-        
-def show_risk_measures(stock_data):
-    st.header("🛡️ Risk Measure Estimation")
-    st.markdown("""
-    Estimate **Value at Risk (VaR)** and **Expected Shortfall (ES)** using:
-    1.  **Historical Simulation:** Non-Parametric (Past Data).
-    2.  **GARCH Models:** Parametric (Volatility Forecasting).
-    """)
 
-    # Create Tabs
-    risk_tabs = st.tabs(["1. Historical Simulation", "2. GARCH Models (Parametric)"])
+
+import streamlit as st
+import numpy as np
+import pandas as pd
+import plotly.graph_objs as go
+from plotly.subplots import make_subplots
+import scipy.stats as stats
+from scipy.integrate import quad
+from scipy.special import gamma
+from arch import arch_model
+import statsmodels.api as sm
+# ==========================================
+# HELPER 1: Robust PDF Calculation
+# ==========================================
+def get_pdf_value(x, dist_type, params):
+    if dist_type == "Normal":
+        return stats.norm.pdf(x)
+    elif dist_type == "Student's t":
+        return stats.t.pdf(x, df=params[0])
+    elif dist_type == "GED":
+        return stats.gennorm.pdf(x, beta=params[0])
+    elif dist_type == "Skewed Student's t":
+        eta, lam = params[0], params[1]
+        # Hansen (1994) Skewed T constants
+        c = gamma((eta + 1) / 2) / (np.sqrt(np.pi * (eta - 2)) * gamma(eta / 2))
+        a = 4 * lam * c * ((eta - 2) / (eta - 1))
+        b = np.sqrt(1 + 3 * lam**2 - a**2)
+        
+        if x < -a / b:
+            z = (b * x + a) / (1 - lam)
+        else:
+            z = (b * x + a) / (1 + lam)
+        return b * c * (1 + 1 / (eta - 2) * z**2) ** (-(eta + 1) / 2)
+    return 0.0
+
+
+# ==========================================
+# HELPER 2: Numerical ES Calculation (FIXED)
+# ==========================================
+def calculate_es_numerical(dist_type, params, alpha):
+    # Determine the VaR cutoff (q_stat) for integration
+    if dist_type == "Normal":
+        q_stat = stats.norm.ppf(alpha)
+    elif dist_type == "Student's t":
+        q_stat = stats.t.ppf(alpha, df=params[0])
+    elif dist_type == "GED":
+        q_stat = stats.gennorm.ppf(alpha, beta=params[0])
+    elif dist_type == "Skewed Student's t":
+        # Approximate using Student T for the integration bound
+        q_stat = stats.t.ppf(alpha, df=params[0]) 
+
+    def integrand(x):
+        return x * get_pdf_value(x, dist_type, params)
+    
+    # Use -20 instead of -100 for better stability in numerical integration
+    integral, _ = quad(integrand, -20, q_stat, limit=50)
+    return integral / alpha
+
+
+def get_dist_and_params_from_fit(result, dist_type):
+    """
+    Map UI dist_type to arch distribution name and extract parameters
+    for use with get_pdf_value / calculate_es_numerical.
+    Returns (arch_dist_name, params_for_helpers).
+    """
+    p = result.params  # pandas Series with named parameters
+
+    if dist_type == "Normal":
+        # arch uses 'normal'
+        return "normal", []  # no extra params for standard normal
+
+    elif dist_type == "Student's t":
+        # arch 't' distribution; df parameter usually named 'nu'
+        df = float(p.get("nu", p[-1]))
+        return "t", [df]
+
+    elif dist_type == "GED":
+        # arch 'ged' distribution; shape parameter also often called 'nu'
+        beta = float(p.get("nu", p[-1]))
+        return "ged", [beta]
+
+    elif dist_type == "Skewed Student's t":
+        # arch 'skewt' distribution; parameters 'nu' and 'lambda'
+        eta = float(p.get("nu", p[-2]))
+        lam = float(p.get("lambda", p[-1]))
+        return "skewt", [eta, lam]
+
+    else:
+        # fallback: normal
+        return "normal", []
+
+
+import streamlit as st
+import numpy as np
+import pandas as pd
+import plotly.graph_objs as go
+from plotly.subplots import make_subplots
+from scipy import stats
+from arch import arch_model
+from statsmodels.tsa.stattools import acf
+from statsmodels.stats.diagnostic import acorr_ljungbox
+import time
+import warnings
+warnings.filterwarnings('ignore')
+
+# ==========================================
+# HELPER FUNCTIONS
+# ==========================================
+
+def compute_diagnostics(model_result):
+    """Compute all diagnostic measures for a GARCH model"""
+    diag = {}
+
+    # Standardized residuals
+    std_resid = model_result.std_resid
+    std_resid_sq = std_resid ** 2
+
+    # ACF
+    diag['acf_z'] = acf(std_resid, nlags=20, fft=False)
+    diag['acf_z2'] = acf(std_resid_sq, nlags=20, fft=False)
+
+    # Ljung-Box tests
+    try:
+        lb_z = acorr_ljungbox(std_resid, lags=20, return_df=True)
+        diag['lb_z_stat'] = lb_z['lb_stat'].iloc[-1]
+        diag['lb_z_pval'] = lb_z['lb_pvalue'].iloc[-1]
+    except:
+        diag['lb_z_stat'] = np.nan
+        diag['lb_z_pval'] = np.nan
+
+    try:
+        lb_z2 = acorr_ljungbox(std_resid_sq, lags=20, return_df=True)
+        diag['lb_z2_stat'] = lb_z2['lb_stat'].iloc[-1]
+        diag['lb_z2_pval'] = lb_z2['lb_pvalue'].iloc[-1]
+    except:
+        diag['lb_z2_stat'] = np.nan
+        diag['lb_z2_pval'] = np.nan
+
+    # Jarque-Bera
+    jb_stat, jb_pval = stats.jarque_bera(std_resid)
+    diag['jb_stat'] = jb_stat
+    diag['jb_pval'] = jb_pval
+
+    # Distribution moments
+    diag['skewness'] = stats.skew(std_resid)
+    diag['kurtosis'] = stats.kurtosis(std_resid, fisher=True)
+
+    # Model info
+    diag['aic'] = model_result.aic
+    diag['bic'] = model_result.bic
+    diag['loglik'] = model_result.loglikelihood
+
+    # Store raw data for plots
+    diag['std_resid'] = std_resid
+    diag['std_resid_sq'] = std_resid_sq
+
+    return diag
+
+def plot_model_diagnostics(model_result, model_name, dist_name):
+    """Create comprehensive 4-panel diagnostic plot"""
+
+    std_resid = model_result.std_resid
+    std_resid_sq = std_resid ** 2
+
+    fig = make_subplots(
+        rows=2, cols=2,
+        subplot_titles=(
+            f'ACF: Standardized Residuals (z_t)',
+            f'ACF: Squared Std. Residuals (z²_t)',
+            f'Q-Q Plot: Normality Check',
+            f'Histogram vs. Normal Distribution'
+        ),
+        specs=[[{'type': 'bar'}, {'type': 'bar'}],
+               [{'type': 'scatter'}, {'type': 'scatter'}]]
+    )
+
+    # Compute ACF
+    acf_z = acf(std_resid, nlags=20, fft=False)
+    acf_z2 = acf(std_resid_sq, nlags=20, fft=False)
+    n = len(std_resid)
+    ci = 1.96 / np.sqrt(n)
+
+    # Plot 1: ACF of z_t
+    fig.add_trace(
+        go.Bar(x=list(range(1, 21)), y=acf_z[1:21], 
+               marker_color='#636EFA', showlegend=False),
+        row=1, col=1
+    )
+    fig.add_hline(y=ci, line_dash="dash", line_color="red", line_width=1, row=1, col=1)
+    fig.add_hline(y=-ci, line_dash="dash", line_color="red", line_width=1, row=1, col=1)
+
+    # Plot 2: ACF of z²_t
+    fig.add_trace(
+        go.Bar(x=list(range(1, 21)), y=acf_z2[1:21], 
+               marker_color='#EF553B', showlegend=False),
+        row=1, col=2
+    )
+    fig.add_hline(y=ci, line_dash="dash", line_color="red", line_width=1, row=1, col=2)
+    fig.add_hline(y=-ci, line_dash="dash", line_color="red", line_width=1, row=1, col=2)
+
+    # Plot 3: Q-Q plot
+    osm, osr = stats.probplot(std_resid, dist="norm")
+    fig.add_trace(
+        go.Scatter(x=osm[0], y=osm[1], mode='markers', 
+                   marker=dict(color='#636EFA', size=3, opacity=0.5),
+                   showlegend=False),
+        row=2, col=1
+    )
+    fig.add_trace(
+        go.Scatter(x=osm[0], y=osm[0], mode='lines',
+                   line=dict(color='red', dash='dash'), showlegend=False),
+        row=2, col=1
+    )
+
+    # Plot 4: Histogram
+    fig.add_trace(
+        go.Histogram(x=std_resid, nbinsx=50, histnorm='probability density',
+                     marker_color='#636EFA', opacity=0.7, showlegend=False),
+        row=2, col=2
+    )
+    x_range = np.linspace(std_resid.min(), std_resid.max(), 200)
+    fig.add_trace(
+        go.Scatter(x=x_range, y=stats.norm.pdf(x_range), mode='lines',
+                   line=dict(color='red', dash='dash', width=2), showlegend=False),
+        row=2, col=2
+    )
+
+    fig.update_xaxes(title_text="Lag", row=1, col=1)
+    fig.update_xaxes(title_text="Lag", row=1, col=2)
+    fig.update_xaxes(title_text="Theoretical Quantiles", row=2, col=1)
+    fig.update_xaxes(title_text="Standardized Residual", row=2, col=2)
+
+    fig.update_yaxes(title_text="ACF", row=1, col=1)
+    fig.update_yaxes(title_text="ACF", row=1, col=2)
+    fig.update_yaxes(title_text="Sample Quantiles", row=2, col=1)
+    fig.update_yaxes(title_text="Density", row=2, col=2)
+
+    fig.update_layout(
+        height=700,
+        title_text=f"<b>Diagnostics: {model_name} - {dist_name}</b>",
+        template='plotly_white'
+    )
+
+    return fig
+
+# ==========================================
+# MAIN FUNCTION
+# ==========================================
+
+def show_risk_measures(stock_data):
+    st.title("📊 Market Risk Analysis")
+
+    risk_tabs = st.tabs([
+        "1. Historical Simulation", 
+        "2. GARCH Model Comparison"
+    ])
 
     # ==========================================
-    # TAB 1: HISTORICAL SIMULATION
+    # TAB 1: HISTORICAL SIMULATION (unchanged)
     # ==========================================
     with risk_tabs[0]:
         st.subheader("Historical Simulation (HS)")
-        
-        c1, c2 = st.columns(2)
-        with c1:
-            hs_conf = st.slider("HS Confidence Level (%)", 90.0, 99.9, 95.0, 0.1, key="hs_conf")
-        with c2:
-            hs_window = st.number_input("Rolling Window (Days)", 100, 1000, 250, 50, key="hs_win")
-        
-        hs_alpha = 1 - (hs_conf / 100.0)
 
-        fig_hs = make_subplots(rows=3, cols=1, subplot_titles=list(stock_data.keys()), vertical_spacing=0.08, shared_xaxes=True)
-        
-        for i, (name, df) in enumerate(stock_data.items()):
-            # HS Calculation
-            roll_var = df['log_return'].rolling(window=hs_window).quantile(hs_alpha).dropna()
-            
-            # Simple ES calculation
-            def calc_es(x):
-                cutoff = np.percentile(x, hs_alpha * 100)
-                return x[x <= cutoff].mean()
-            
-            # Note: Applying on large datasets can be slow; optimized for this scale
-            roll_es = df['log_return'].rolling(window=hs_window).apply(calc_es, raw=True).dropna()
-            
-            common_idx = roll_var.index
-            
-            fig_hs.add_trace(go.Scatter(x=df.loc[common_idx, 'date'], y=df.loc[common_idx, 'log_return'], 
-                                        mode='lines', line=dict(color='rgba(0,0,255,0.15)', width=1), name=f'{name} Returns'), row=i+1, col=1)
-            fig_hs.add_trace(go.Scatter(x=df.loc[common_idx, 'date'], y=roll_var, 
-                                        mode='lines', line=dict(color='#EF553B', width=1.5), name='VaR (HS)'), row=i+1, col=1)
-            fig_hs.add_trace(go.Scatter(x=df.loc[common_idx, 'date'], y=roll_es, 
-                                        mode='lines', line=dict(color='#FFA15A', width=1.5, dash='dot'), name='ES (HS)'), row=i+1, col=1)
-
-        fig_hs.update_layout(height=1200, title_text="Historical Simulation Risk Measures", showlegend=False)
-        st.plotly_chart(fig_hs, use_container_width=True)
-
-    # ==========================================
-    # TAB 2: GARCH MODELS
-    # ==========================================
-    with risk_tabs[1]:
-        st.subheader("GARCH Volatility Modeling")
-        
-        st.info("""
-        **💡 Configuration Guide:**
-        * **Dist:** Use **Student's t** or **Skewed Student's t** to handle heavy tails.
-        * **Model:** Use **GJR-GARCH** or **EGARCH** to handle the Leverage Effect.
+        st.markdown("""
+        **Historical Simulation** calculates risk measures directly from past returns.
+        VaR and ES are displayed as positive numbers representing potential losses.
         """)
 
-        # --- 1. Per-Company Configuration ---
-        configs = {}
-        cols = st.columns(3)
-        
-        # Maps for arch package
-        vol_map = {"GARCH": "Garch", "EGARCH": "EGARCH", "GJR-GARCH": "Garch"} 
-        # Note: 'skewt' usually requires 'nu' and 'lambda'
-        dist_map = {"Normal": "normal", "Student's t": "t", "Skewed Student's t": "skewt"}
+        c1, c2 = st.columns(2)
+        with c1: 
+            hs_conf = st.slider("HS Confidence Level (%)", 90.0, 99.9, 95.0, 0.1, key="hs_conf")
+        with c2: 
+            hs_window = st.number_input("Rolling Window (Days)", 100, 1000, 250, 50, key="hs_win")
 
-        for i, (name, df) in enumerate(stock_data.items()):
-            with cols[i]:
-                st.markdown(f"**{name}** Settings")
-                # Default selection logic: GS (GJR/Skewt), BAC (GJR/t), MET (GJR/t)
-                model_t = st.selectbox(f"Model", ["GJR-GARCH", "EGARCH", "GARCH"], index=0, key=f"m_{name}")
-                dist_t = st.selectbox(f"Dist", ["Student's t", "Skewed Student's t", "Normal"], index=1, key=f"d_{name}")
+        hs_alpha = 1 - (hs_conf / 100.0)
+
+        if st.button("📊 Calculate HS Risk Measures", key="hs_estimate", type="primary"):
+            progress_bar = st.progress(0)
+
+            fig_hs = make_subplots(
+                rows=3, cols=1, 
+                subplot_titles=list(stock_data.keys()), 
+                vertical_spacing=0.08, 
+                shared_xaxes=True
+            )
+
+            n_stocks = len(stock_data)
+            for i, (name, df) in enumerate(stock_data.items()):
+                progress_bar.progress(int((i / n_stocks) * 100))
+
+                roll_var = -df['log_return'].rolling(window=hs_window).quantile(hs_alpha).dropna()
+
+                def calc_es_hs(x):
+                    cutoff = np.percentile(x, hs_alpha * 100)
+                    return -x[x <= cutoff].mean()
+
+                roll_es = df['log_return'].rolling(window=hs_window).apply(calc_es_hs, raw=True).dropna()
+                common_idx = roll_var.index
+
+                fig_hs.add_trace(
+                    go.Scatter(x=df.loc[common_idx, 'date'], y=-df.loc[common_idx, 'log_return'],
+                               mode='lines', line=dict(color='rgba(0,0,255,0.15)', width=1), 
+                               name=f'{name} Losses'),
+                    row=i+1, col=1
+                )
+                fig_hs.add_trace(
+                    go.Scatter(x=df.loc[common_idx, 'date'], y=roll_var, 
+                               mode='lines', line=dict(color='#EF553B', width=1.5), name='VaR'),
+                    row=i+1, col=1
+                )
+                fig_hs.add_trace(
+                    go.Scatter(x=df.loc[common_idx, 'date'], y=roll_es, 
+                               mode='lines', line=dict(color='#FFA15A', width=1.5, dash='dot'), name='ES'),
+                    row=i+1, col=1
+                )
+
+            progress_bar.progress(100)
+            time.sleep(0.5)
+            progress_bar.empty()
+
+            fig_hs.update_layout(height=1000, showlegend=False)
+            st.plotly_chart(fig_hs, use_container_width=True)
+            st.success("✅ Historical Simulation completed!")
+
+    # ==========================================
+    # TAB 2: GARCH MODEL COMPARISON
+    # ==========================================
+    with risk_tabs[1]:
+        st.header("GARCH Model Comparison")
+        st.markdown("""
+        Usage: Compare the selected GARCH models based on their ability to model the real data.
+        """)
+
+        # --- Configuration Section ---
+        st.subheader("Configuration")
+        
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col1:
+            series_name = st.selectbox("Select Time Series", list(stock_data.keys()), key="garch_series")
+        with col2:
+            conf_level = st.slider("VaR Confidence Level (%)", 90.0, 99.9, 95.0, 0.1, key="garch_conf")
+        with col3:
+            alpha = 1 - conf_level / 100.0
+            df = stock_data[series_name]
+            returns = df['log_return'].dropna().reset_index(drop=True)
+            dates = df['date'].iloc[returns.index].reset_index(drop=True)
+            
+            # Window selection method
+            window_method = st.radio(
+                "Estimation Window Method",
+                ["Number of Days", "Date Range"],
+                horizontal=True,
+                key="window_method"
+            )
+            
+            if window_method == "Number of Days":
+                estimation_window = st.number_input(
+                    "Estimation Window (days)", 
+                    min_value=500, 
+                    max_value=len(returns)-100, 
+                    value=min(1500, len(returns)-100),
+                    step=100
+                )
+                # Use first N observations
+                estimation_indices = range(estimation_window)
+            else:  # Date Range
+                min_date = dates.min()
+                max_date = dates.max()
                 
-                c_p, c_q = st.columns(2)
-                with c_p: p = st.number_input(f"p", 1, 5, 1, key=f"p_{name}")
-                with c_q: q = st.number_input(f"q", 1, 5, 1, key=f"q_{name}")
+                col_date1, col_date2 = st.columns(2)
+                with col_date1:
+                    start_date = st.date_input(
+                        "Start Date",
+                        value=min_date,
+                        min_value=min_date,
+                        max_value=max_date,
+                        key="est_start"
+                    )
+                with col_date2:
+                    end_date = st.date_input(
+                        "End Date",
+                        value=min_date + pd.Timedelta(days=1000),
+                        min_value=min_date,
+                        max_value=max_date,
+                        key="est_end"
+                    )
                 
-                configs[name] = {"model": model_t, "dist": dist_t, "p": p, "q": q}
+                # Convert to datetime for comparison
+                start_date = pd.to_datetime(start_date)
+                end_date = pd.to_datetime(end_date)
+                
+                # Get indices for date range
+                estimation_indices = dates[(dates >= start_date) & (dates <= end_date)].index
+                
+                if len(estimation_indices) < 100:
+                    st.error(f"Selected date range has only {len(estimation_indices)} observations. Need at least 100.")
+
 
         st.divider()
-        garch_conf = st.slider("GARCH VaR Confidence (%)", 90.0, 99.9, 95.0, 0.1)
-        garch_alpha = 1 - (garch_conf / 100.0)
 
-        # Button to trigger calculation
-        if st.button("Estimate GARCH Models"):
-            
-            fig_garch = make_subplots(rows=3, cols=1, subplot_titles=list(stock_data.keys()), 
-                                      vertical_spacing=0.08, shared_xaxes=True)
-            
-            summary_stats = []
-            model_outputs = {} # Store text summaries
+        # --- Model & Distribution Selection ---
+        col_select_1, col_select_2 = st.columns(2)
+        
+        with col_select_1:
+            st.markdown("**Volatility Models**")
+            col_m1, col_m2, col_m3 = st.columns(3)
+            models_to_test = []
+            with col_m1:
+                if st.checkbox("GARCH(1,1)", value=True, key="m_garch"):
+                    models_to_test.append(("GARCH(1,1)", {'vol': 'GARCH', 'p': 1, 'o': 0, 'q': 1}))
+            with col_m2:
+                if st.checkbox("GJR-GARCH(1,1)", value=True, key="m_gjr"):
+                    models_to_test.append(("GJR-GARCH(1,1)", {'vol': 'GARCH', 'p': 1, 'o': 1, 'q': 1}))
+            with col_m3:
+                if st.checkbox("EGARCH(1,1)", value=False, key="m_egarch"):
+                    models_to_test.append(("EGARCH(1,1)", {'vol': 'EGARCH', 'p': 1, 'o': 0, 'q': 1}))
 
-            with st.spinner("Fitting models... this may take a moment"):
-                for i, (name, df) in enumerate(stock_data.items()):
-                    cfg = configs[name]
-                    
-                    # 1. Scale Returns (Critical for GARCH convergence)
-                    returns = df['log_return'] * 100 
-                    
-                    # 2. Configure Model
-                    dist_code = dist_map[cfg['dist']]
-                    
-                    if cfg['model'] == "GJR-GARCH":
-                        # In 'arch', GJR is GARCH with o=1
-                        model = arch_model(returns, vol='Garch', p=cfg['p'], o=1, q=cfg['q'], dist=dist_code)
-                    elif cfg['model'] == "EGARCH":
-                        model = arch_model(returns, vol='EGARCH', p=cfg['p'], q=cfg['q'], dist=dist_code)
-                    else: # Standard GARCH
-                        model = arch_model(returns, vol='Garch', p=cfg['p'], o=0, q=cfg['q'], dist=dist_code)
-                    
-                    # 3. Fit Model
+        with col_select_2:
+            st.markdown("**Error Distributions**")
+            col_d1, col_d2, col_d3 = st.columns(3)
+            dists_to_test = []
+            with col_d1:
+                if st.checkbox("Normal", value=True, key="d_normal"):
+                    dists_to_test.append(("Normal", 'normal'))
+            with col_d2:
+                if st.checkbox("Student-t", value=True, key="d_t"):
+                    dists_to_test.append(("Student-t", 't'))
+            with col_d3:
+                if st.checkbox("Skewed-t", value=False, key="d_skewt"):
+                    dists_to_test.append(("Skewed-t", 'skewt'))
+
+        if len(models_to_test) == 0 or len(dists_to_test) == 0:
+            st.warning("Please select at least one model and one distribution.")
+            st.stop()
+
+        st.markdown("")
+        
+        # --- Estimation Action ---
+        if st.button("Estimate Selected Models", type="primary", key="estimate_all"):
+        
+            returns_est = returns.iloc[estimation_indices]  # Changed from returns.iloc[:estimation_window]
+        
+            # Data preprocessing and validation
+            if len(returns_est) < 100:
+                st.error("Estimation window too small. Need at least 100 observations.")
+                st.stop()
+
+            
+            # Check for extreme values
+            if returns_est.abs().max() > 0.5:
+                st.warning("⚠️ Extreme returns detected (>50%). Results may be unreliable.")
+            
+            # Demean returns for better numerical stability
+            returns_mean = returns_est.mean()
+            returns_demeaned = returns_est - returns_mean
+            
+            all_results = {}
+            total_models = len(models_to_test) * len(dists_to_test)
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+
+            idx = 0
+            for model_name, model_config in models_to_test:
+                for dist_name, dist_config in dists_to_test:
+                    idx += 1
+                    status_text.text(f"Estimating {model_name} with {dist_name} ({idx}/{total_models})...")
+                    progress_bar.progress(int(idx / total_models * 100))
+
                     try:
-                        res = model.fit(disp='off')
-                        model_outputs[name] = res.summary()
+                        # KEY FIX: Use rescale=True for automatic data scaling
+                        am = arch_model(
+                            returns_demeaned,
+                            vol=model_config['vol'],
+                            p=model_config['p'],
+                            o=model_config['o'],
+                            q=model_config['q'],
+                            mean='Constant',
+                            dist=dist_config,
+                            rescale=True  # CRITICAL: Allow automatic rescaling
+                        )
+
+                        # Fit with better options
+                        result = am.fit(
+                            disp='off',
+                            show_warning=False,
+                            options={'maxiter': 1000}  # Allow more iterations
+                        )
+                        
+                        # Validate estimation results
+                        if not np.isfinite(result.loglikelihood):
+                            st.warning(f"⚠️ {model_name} with {dist_name}: Invalid log-likelihood")
+                            continue
+                        
+                        # Check parameter bounds
+                        params = result.params
+                        if 'omega' in params.index and params['omega'] <= 0:
+                            st.warning(f"⚠️ {model_name} with {dist_name}: omega ≤ 0, skipping")
+                            continue
+                        
+                        # Compute diagnostics
+                        diagnostics = compute_diagnostics(result)
+                        
+                        # Additional validation of diagnostics
+                        if not all(np.isfinite(v) for v in diagnostics.values() if isinstance(v, (int, float))):
+                            st.warning(f"⚠️ {model_name} with {dist_name}: Invalid diagnostics")
+                            continue
+
+                        key = f"{model_name}_{dist_name}"
+                        all_results[key] = {
+                            'model': result,
+                            'model_name': model_name,
+                            'dist_name': dist_name,
+                            'config': model_config,
+                            'dist_config': dist_config,
+                            'diagnostics': diagnostics,
+                            'returns_mean': returns_mean  # Store for adjustment
+                        }
+
                     except Exception as e:
-                        st.error(f"Fit failed for {name}: {e}")
+                        st.warning(f"Failed to fit {model_name} with {dist_name}: {str(e)}")
                         continue
+
+            progress_bar.empty()
+            status_text.empty()
+
+            if len(all_results) == 0:
+                st.error("❌ No models successfully estimated. Check your data and settings.")
+                st.stop()
+
+            st.success(f"✅ Successfully estimated {len(all_results)} models.")
+
+            # Store in session state
+            st.session_state['garch_results'] = all_results
+            st.session_state['series_name'] = series_name
+            st.session_state['returns'] = returns
+            st.session_state['dates'] = dates
+            st.session_state['alpha'] = alpha
+            st.session_state['conf_level'] = conf_level
+
+        # --- Results View ---
+        if 'garch_results' in st.session_state:
+            all_results = st.session_state['garch_results']
+
+            st.divider()
+            st.subheader("Model Comparison Overview")
+
+            # Create comparison table
+            comparison_data = []
+            for key, res in all_results.items():
+                diag = res['diagnostics']
+                comparison_data.append({
+                    'Model': res['model_name'],
+                    'Distribution': res['dist_name'],
+                    'Log-Likelihood': diag['loglik'],
+                    'AIC': diag['aic'],
+                    'BIC': diag['bic'],
+                    'LB(z) p-value': diag['lb_z_pval'],
+                    'LB(z²) p-value': diag['lb_z2_pval'],
+                    'JB p-value': diag['jb_pval'],
+                    'Skewness': diag['skewness'],
+                    'Ex. Kurtosis': diag['kurtosis'],
+                    'Key': key
+                })
+
+            df_comp = pd.DataFrame(comparison_data)
+            
+
+            # Style the table
+            def color_pvalue(val):
+                if isinstance(val, (int, float)):
+                    if val > 0.05:
+                        return 'background-color: #d4edda; color: #155724;'
+                    elif val > 0.01:
+                        return 'background-color: #fff3cd; color: #856404;'
+                    else:
+                        return 'background-color: #f8d7da; color: #721c24;'
+                return ''
+
+            styled_df = df_comp[['Model', 'Distribution', 'Log-Likelihood', 'AIC', 'BIC',
+                                'LB(z) p-value', 'LB(z²) p-value', 'JB p-value',
+                                'Skewness', 'Ex. Kurtosis']].style.applymap(
+                color_pvalue,
+                subset=['LB(z) p-value', 'LB(z²) p-value', 'JB p-value']
+            ).format({
+                'Log-Likelihood': '{:.2f}',
+                'AIC': '{:.2f}',
+                'BIC': '{:.2f}',
+                'LB(z) p-value': '{:.4f}',
+                'LB(z²) p-value': '{:.4f}',
+                'JB p-value': '{:.4f}',
+                'Skewness': '{:.4f}',
+                'Ex. Kurtosis': '{:.2f}'
+            })
+
+            st.dataframe(styled_df, use_container_width=True)
+
+            st.caption("""
+            **P-Value Indicators:** Green (p > 0.05): Test Pass | Yellow (0.01 < p ≤ 0.05): Borderline | Red (p ≤ 0.01): Test Fail. 
+            """)
+
+            # --- Detailed Examination ---
+            st.divider()
+            st.subheader("Detailed Model Examination")
+
+            model_keys = list(all_results.keys())
+            model_labels = [f"{all_results[k]['model_name']} - {all_results[k]['dist_name']}" 
+                        for k in model_keys]
+
+            selected_label = st.selectbox(
+                "Select model to examine",
+                model_labels,
+                key="selected_model"
+            )
+
+            selected_key = model_keys[model_labels.index(selected_label)]
+            selected_result = all_results[selected_key]
+
+            # Display detailed diagnostics
+            col_d1, col_d2 = st.columns(2)
+
+            with col_d1:
+                st.markdown("**Estimated Parameters**")
+                params_df = pd.DataFrame({
+                    'Parameter': selected_result['model'].params.index,
+                    'Coefficient': selected_result['model'].params.values,
+                    'Std Error': selected_result['model'].std_err.values,
+                    'p-value': selected_result['model'].pvalues.values
+                })
+
+                styled_params = params_df.style.format({
+                    'Coefficient': '{:.6f}',
+                    'Std Error': '{:.6f}',
+                    'p-value': '{:.4f}'
+                }).applymap(
+                    lambda v: 'background-color: #d4edda; color: #155724' if v < 0.05 else 'background-color: #f8d7da; color: #721c24',
+                    subset=['p-value']
+                )
+
+                st.dataframe(styled_params, use_container_width=True, hide_index=True)
+
+            with col_d2:
+                st.markdown("**Diagnostic Test Summary**")
+                diag = selected_result['diagnostics']
+
+                test_summary = pd.DataFrame({
+                    'Test': [
+                        'Ljung-Box (z_t)',
+                        'Ljung-Box (z²_t)',
+                        'Jarque-Bera (Normality)',
+                        'Skewness',
+                        'Excess Kurtosis'
+                    ],
+                    'Statistic': [
+                        f"{diag['lb_z_stat']:.2f}",
+                        f"{diag['lb_z2_stat']:.2f}",
+                        f"{diag['jb_stat']:.2f}",
+                        f"{diag['skewness']:.4f}",
+                        f"{diag['kurtosis']:.2f}"
+                    ],
+                    'p-value': [
+                        f"{diag['lb_z_pval']:.4f}",
+                        f"{diag['lb_z2_pval']:.4f}",
+                        f"{diag['jb_pval']:.4f}",
+                        '-',
+                        '-'
+                    ],
+                    'Status': [
+                        'Pass' if diag['lb_z_pval'] > 0.05 else 'Fail',
+                        'Pass' if diag['lb_z2_pval'] > 0.05 else 'Fail',
+                        'Good fit' if diag['jb_pval'] > 0.05 else 'Poor fit',
+                        'Symmetric' if abs(diag['skewness']) < 0.5 else 'Skewed',
+                        'Normal' if abs(diag['kurtosis']) < 3 else 'Fat tails'
+                    ]
+                })
+
+                st.dataframe(test_summary, use_container_width=True, hide_index=True)
+                
+                # Metrics Row
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Log-Likelihood", f"{diag['loglik']:.2f}")
+                m2.metric("AIC", f"{diag['aic']:.2f}")
+                m3.metric("BIC", f"{diag['bic']:.2f}")
+
+            # Diagnostic plots
+            st.markdown("**Diagnostic Plots**")
+            fig_diag = plot_model_diagnostics(
+                selected_result['model'],
+                selected_result['model_name'],
+                selected_result['dist_name']
+            )
+            st.plotly_chart(fig_diag, use_container_width=True)
+
+            with st.expander("Interpretation Guide for Plots"):
+                st.markdown("""
+                * **Top-left (ACF of z_t):** Should show no significant autocorrelation. Bars within red dashed bands indicate the model captures serial dependence.
+                * **Top-right (ACF of z²_t):** Bars within bands indicate volatility clustering is fully captured (no ARCH effects).
+                * **Bottom-left (Q-Q Plot):** Points following the diagonal line indicate a good distributional fit. Tails deviating suggest needing Student-t or Skewed-t distributions.
+                * **Bottom-right (Histogram):** Comparison of empirical data (blue) vs assumed distribution (red dashed).
+                """)
+
+            # --- Forecasting Section ---
+            st.divider()
+            st.subheader("Rolling Window Forecast")
+            st.markdown("""
+                        We Calculate VaR and ES based on a rolling window. The model can be selected via the dropdown in the model examination above.
+                        """)
+            st.info(f"Selected for analysis: **{selected_result['model_name']} with {selected_result['dist_name']}**")
+            
+            col_f1, col_f2 = st.columns([1, 2])
+            
+            with col_f1:
+                rolling_window = st.number_input(
+                    "Rolling Window Size (days)",
+                    min_value=200, max_value=1000, value=500, step=50,
+                    key="rolling_window"
+                )
+            
+            with col_f2:
+                st.write("") # Vertical align spacer
+                st.write("") 
+                use_this_model = st.button(
+                    f"Set Model & Generate Forecast",
+                    type="primary",
+                    key="use_model"
+                )
+
+            if use_this_model:
+                st.session_state['forecast_model'] = selected_result
+
+            if 'forecast_model' in st.session_state and use_this_model:
+                forecast_model = st.session_state['forecast_model']
+                returns = st.session_state['returns']
+                dates = st.session_state['dates']
+                alpha = st.session_state['alpha']
+                conf_level = st.session_state['conf_level']
+
+                with st.spinner("Generating rolling forecasts..."):
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
                     
-                    # 4. Extract Parameters Safely (Fix for KeyError)
-                    params = res.params
-                    
-                    # Get Conditional Volatility and Mean
-                    cond_vol = res.conditional_volatility / 100 # Rescale back
-                    mu = params.get('mu', 0.0) / 100
-                    
-                    # 5. Calculate Quantile (q) based on Distribution
-                    if cfg['dist'] == "Normal":
-                        q_stat = stats.norm.ppf(garch_alpha)
-                        es_stat = -stats.norm.pdf(stats.norm.ppf(garch_alpha)) / garch_alpha
-                        
-                    elif "Student" in cfg['dist']:
-                        # Robustly fetch degrees of freedom
-                        # 'skewt' uses 'nu' and 'lambda'. 't' uses 'nu'. 
-                        # 'ged' uses 'nu' or 'eta'.
-                        nu = params.get('nu', params.get('eta', 5.0)) # Fallback to 5 if missing
-                        
-                        if "Skewed" in cfg['dist']:
-                            lambda_ = params.get('lambda', 0.0) # Fallback to 0 (symmetric)
-                            # Pass BOTH parameters to the distribution's ppf
-                            try:
-                                q_stat = model.distribution.ppf(garch_alpha, [nu, lambda_])
-                            except Exception:
-                                # Fallback if library version differs
-                                q_stat = stats.t.ppf(garch_alpha, df=nu) 
+                    n_total = len(returns)
+                    total_iterations = n_total - rolling_window
+                    forecast_results = []
+
+                    # Scaling for numerical stability
+                    scaling_factor = 100
+                    returns_scaled = returns * scaling_factor
+
+                    for i, t in enumerate(range(rolling_window, n_total)):
+                        if i % 10 == 0:
+                            percent_complete = int((i / total_iterations) * 100)
+                            progress_bar.progress(percent_complete)
+                            status_text.text(f"Processing day {i}/{total_iterations}...")
+
+                        window_returns = returns_scaled.iloc[t-rolling_window:t]
+
+                        try:
+                            am = arch_model(
+                                window_returns, 
+                                vol=forecast_model['config']['vol'],
+                                p=forecast_model['config']['p'], 
+                                o=forecast_model['config']['o'], 
+                                q=forecast_model['config']['q'],
+                                mean='Constant', 
+                                dist=forecast_model['dist_config'],
+                                rescale=False
+                            )
                             
-                            # Simplified ES for visualization (Exact Skewed t ES is complex)
-                            es_stat = q_stat * 1.15 
-                        else:
-                            # Standard Student's t
-                            q_stat = stats.t.ppf(garch_alpha, df=nu)
+                            res = am.fit(disp='off', show_warning=False)
+
+                            fcast = res.forecast(horizon=1, reindex=False)
+                            mu_t = fcast.mean.values[-1, 0]
+                            sig_t = np.sqrt(fcast.variance.values[-1, 0])
+
+                            if np.isnan(sig_t) or sig_t > (window_returns.std() * 10):
+                                continue
+
+                            params = res.params
                             
-                            # Analytical ES for t-dist
-                            x_q = stats.t.ppf(garch_alpha, df=nu)
-                            pdf_q = stats.t.pdf(x_q, df=nu)
-                            es_stat = -((nu + x_q**2) / (nu - 1)) * (pdf_q / garch_alpha)
+                            if forecast_model['dist_name'] == 'Student-t':
+                                nu = params['nu']
+                                q_z = stats.t.ppf(alpha, df=nu)
+                                es_z = -(stats.t.pdf(q_z, df=nu) / alpha) * ((nu + q_z**2) / (nu - 1))
+                            else: # Default/Normal
+                                q_z = stats.norm.ppf(alpha)
+                                es_z = -stats.norm.pdf(q_z) / alpha
 
-                    # 6. Compute Risk Measures
-                    var_garch = mu + cond_vol * q_stat
-                    es_garch = mu + cond_vol * es_stat
+                            var_t = -(mu_t + sig_t * q_z) / scaling_factor
+                            es_t = -(mu_t + sig_t * es_z) / scaling_factor
 
-                    # 7. Plotting
-                    fig_garch.add_trace(go.Scatter(x=df['date'], y=df['log_return'], 
-                        mode='lines', line=dict(color='rgba(0,0,255,0.15)', width=1), name=f"{name} Ret"), row=i+1, col=1)
-                    
-                    fig_garch.add_trace(go.Scatter(x=df['date'], y=var_garch, 
-                        mode='lines', line=dict(color='#00CC96', width=1.5), name=f"VaR"), row=i+1, col=1)
-                    
-                    fig_garch.add_trace(go.Scatter(x=df['date'], y=es_garch, 
-                        mode='lines', line=dict(color='#AB63FA', width=1.5, dash='dot'), name=f"ES"), row=i+1, col=1)
+                            forecast_results.append({
+                                'date': dates.iloc[t],
+                                'return': returns.iloc[t],
+                                'var': var_t,
+                                'es': es_t
+                            })
+                        except:
+                            continue
 
-                    # Backtesting
-                    breaches = df[df['log_return'] < var_garch]
-                    breach_pct = len(breaches) / len(df) * 100
-                    
-                    summary_stats.append({
-                        "Company": name,
-                        "Config": f"{cfg['model']} / {cfg['dist']}",
-                        "AIC": f"{res.aic:.1f}",
-                        "Target %": f"{garch_alpha*100:.1f}%",
-                        "Breach %": f"{breach_pct:.2f}%"
-                    })
+                    progress_bar.progress(100)
+                    status_text.empty()
 
-            fig_garch.update_layout(height=1200, title_text="Parametric Risk Estimation (GARCH)", showlegend=False)
-            st.plotly_chart(fig_garch, use_container_width=True)
-            
-            # --- Results Tables ---
-            st.subheader("Model Fit & Backtest Results")
-            st.table(pd.DataFrame(summary_stats).set_index("Company"))
-            
-            st.markdown("### 📋 Full Model Outputs")
-            st.caption("Inspect p-values and coefficients (alpha, beta, nu, lambda) below.")
-            
-            # Display summary tables in expanders
-            for name, summary in model_outputs.items():
-                with st.expander(f"View Output for {name}"):
-                    st.code(summary)
+                    if len(forecast_results) == 0:
+                        st.error("No forecasts generated.")
+                    else:
+                        df_forecast = pd.DataFrame(forecast_results)
+
+                        # Plot
+                        fig_rolling = go.Figure()
+
+                        fig_rolling.add_trace(go.Scatter(
+                            x=df_forecast['date'], y=-df_forecast['return'],
+                            mode='lines', line=dict(color='rgba(0,0,255,0.15)', width=1),
+                            name='Actual Losses'
+                        ))
+
+                        fig_rolling.add_trace(go.Scatter(
+                            x=df_forecast['date'], y=df_forecast['var'],
+                            mode='lines', line=dict(color='#EF553B', width=2),
+                            name=f'VaR ({conf_level:.1f}%)'
+                        ))
+
+                        fig_rolling.add_trace(go.Scatter(
+                            x=df_forecast['date'], y=df_forecast['es'],
+                            mode='lines', line=dict(color='#FFA15A', width=2, dash='dot'),
+                            name=f'ES ({conf_level:.1f}%)'
+                        ))
+
+                        fig_rolling.update_layout(
+                            title=f"Rolling {forecast_model['model_name']} ({forecast_model['dist_name']}) - {st.session_state['series_name']}",
+                            xaxis_title="Date", yaxis_title="Loss Magnitude",
+                            hovermode='x unified', height=600, template='plotly_white'
+                        )
+
+                        st.plotly_chart(fig_rolling, use_container_width=True)
+                        st.success("Rolling forecast calculation completed.")
+
+
+
+
+
+
+
+
+
+
+# -----------------------------------
+# Helper: ES for standardized residual
+# -----------------------------------
+def es_standard(dist_type, alpha, params):
+    """
+    Return (z_var, z_es) for standardized innovation Z at level alpha.
+    dist_type: "Normal", "Student's t", "Skewed Student's t", "GED"
+    params: dict with needed parameters, e.g. {"nu": ..., "lam": ..., "beta": ...}
+    """
+    if dist_type == "Normal":
+        q = stats.norm.ppf(alpha)
+        es = stats.norm.pdf(q) / alpha
+        return q, es
+
+    elif dist_type == "Student's t":
+        nu = params["nu"]
+        q = stats.t.ppf(alpha, df=nu)
+        es = (stats.t.pdf(q, df=nu) * (nu + q**2)) / ((nu - 1) * alpha)
+        return q, es
+
+    elif dist_type == "GED":
+        beta = params["beta"]
+        # Approximate ES numerically for GED
+        from scipy.integrate import quad
+        def pdf(x):
+            return stats.gennorm.pdf(x, beta=beta)
+        def integrand(x):
+            return x * pdf(x)
+        q = stats.gennorm.ppf(alpha, beta=beta)
+        integral, _ = quad(integrand, -20, q, limit=100)
+        es = integral / alpha
+        return q, es
+
+    elif dist_type == "Skewed Student's t":
+        # Hansen (1994) skewed t: ES numeric on standardized variable
+        from scipy.integrate import quad
+        nu = params["nu"]
+        lam = params["lam"]
+
+        # constants for Hansen skew-t (as in your HS helper)
+        from math import gamma, sqrt, pi
+        c = gamma((nu + 1) / 2) / (sqrt(pi * (nu - 2)) * gamma(nu / 2))
+        a = 4 * lam * c * ((nu - 2) / (nu - 1))
+        b = np.sqrt(1 + 3 * lam**2 - a**2)
+
+        def skewt_pdf(x):
+            if x < -a / b:
+                z = (b * x + a) / (1 - lam)
+            else:
+                z = (b * x + a) / (1 + lam)
+            return b * c * (1 + z**2 / (nu - 2)) ** (-(nu + 1) / 2)
+
+        # Find quantile q by root finding on CDF
+        def cdf(x):
+            val, _ = quad(skewt_pdf, -20, x, limit=100)
+            return val
+
+        # crude bisection for q
+        low, high = -20.0, 10.0
+        for _ in range(50):
+            mid = 0.5 * (low + high)
+            if cdf(mid) < alpha:
+                low = mid
+            else:
+                high = mid
+        q = 0.5 * (low + high)
+
+        def integrand(x):
+            return x * skewt_pdf(x)
+        integral, _ = quad(integrand, -20, q, limit=100)
+        es = integral / alpha
+        return q, es
+
+    else:
+        # fallback: normal
+        q = stats.norm.ppf(alpha)
+        es = stats.norm.pdf(q) / alpha
+        return q, es
+
 def show_forecasting(stock_data):
-    st.header("🔮 Volatility Forecasting")
-    st.info("Predicting future volatility using GARCH-family models.")
+    # Header with subtitle
+    st.title("GARCH-Family Volatility Forecasting")
+    st.caption("Forecast future volatility using parameters estimated from historical split.")
     
+    # ========================================
+    # SECTION 1: Model Configuration
+    # ========================================
+    with st.container():
+        st.markdown("### Configuration")
+        st.markdown("""Choose the GARCH Configuration for each stock that was found to be the best in the Risk Measures tab.\\
+                 *My suggestions based on the stylized facts and the fitted GARCH models:*\\
+                 **Goldman Sachs:** GJR-GARCH(1,1) with Skewed-t\\
+                 **Bank of America:** GJR-GARCH(1,1) with Student-t\\
+                 **MetLife:** EGARCH(1,1) with Student-t
+                 """)
+        
+        # Series selection
+        col_a, col_b = st.columns([2, 1])
+        with col_a:
+            series_name = st.selectbox(
+                "Time series",
+                list(stock_data.keys()),
+                index=0
+            )
+        with col_b:
+            df = stock_data[series_name][['date', 'log_return']].dropna().reset_index(drop=True)
+            # Ensure date is datetime
+            df['date'] = pd.to_datetime(df['date'])
+            st.metric("Observations", f"{len(df):,}")
+        
+        # Model Specs
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            model_type = st.selectbox(
+                "Model",
+                ["GARCH(1,1)", "GJR-GARCH(1,1)", "EGARCH(1,1)", "IGARCH(1,1)", "GARCH-M(1,1)"],
+                index=0
+            )
+        with col2:
+            dist_choice = st.selectbox(
+                "Distribution",
+                ["Normal", "Student's t", "Skewed Student's t", "GED"],
+                index=1
+            )
+        with col3:
+            forecast_horizon = st.number_input(
+                "Horizon (days)",
+                min_value=1, max_value=60, value=10, step=1
+            )
+        with col4:
+            conf = st.slider("VaR Confidence (%)", 90.0, 99.9, 95.0, 0.1)
+        
+        # Split controls
+        st.markdown("#### Estimation Split")
+        st.info("Parameters are estimated on **In-Sample** data only. Then, those parameters are applied to the **Full History** to forecast the true future.")
+        
+        col_split1, col_split2, col_split3 = st.columns([2, 1, 1])
+        with col_split1:
+            split_frac = st.slider("In-sample proportion", 0.5, 0.95, 0.8, 0.05)
+        
+        n = len(df)
+        n_est = int(n * split_frac)
+        est_data = df.iloc[:n_est].copy()
+        
+        with col_split2:
+            st.metric("In-sample (Training)", f"{n_est:,}")
+        with col_split3:
+            st.metric("Out-of-sample (Test)", f"{n - n_est:,}")
     
+    st.divider()
     
+    # ========================================
+    # SECTION 2: Estimation & Forecasting
+    # ========================================
+    alpha = 1 - conf / 100.0
+    
+    run_forecast = st.button("Estimate & Forecast Future", type="primary", use_container_width=True)
+    
+    if run_forecast:
+        returns_est = est_data['log_return'] # Training data
+        returns_all = df['log_return']       # Full data for projection
+        
+        # Map distribution
+        dist_map = {
+            "Normal": "normal", "Student's t": "t", 
+            "Skewed Student's t": "skewt", "GED": "ged"
+        }
+        arch_dist = dist_map.get(dist_choice, "normal")
+        
+        # Map model type
+        vol = 'GARCH'
+        p, o, q = 1, 0, 1
+        mean_spec = 'Constant'
+        extra_kwargs = {}
+        
+        if model_type == "GARCH(1,1)":
+            p, o, q = 1, 0, 1
+        elif model_type == "GJR-GARCH(1,1)":
+            p, o, q = 1, 1, 1
+        elif model_type == "EGARCH(1,1)":
+            vol = 'EGARCH'
+        elif model_type == "IGARCH(1,1)":
+            extra_kwargs["power"] = 2.0
+        elif model_type == "GARCH-M(1,1)":
+            mean_spec = 'GARCH-M'
+        
+        # 1. ESTIMATION PHASE (In-Sample Only)
+        with st.spinner("1. Estimating parameters on in-sample split..."):
+            am_est = arch_model(
+                returns_est, vol=vol, p=p, o=o, q=q, 
+                mean=mean_spec, dist=arch_dist, rescale=False, **extra_kwargs
+            )
+            try:
+                res_est = am_est.fit(disp='off')
+            except Exception as e:
+                st.error(f"Estimation failed: {e}")
+                return
+
+        # 2. FILTERING PHASE (Apply params to Full Data)
+        with st.spinner("2. Applying parameters to full history for future forecast..."):
+            # Create a new model instance with ALL data
+            am_all = arch_model(
+                returns_all, vol=vol, p=p, o=o, q=q, 
+                mean=mean_spec, dist=arch_dist, rescale=False, **extra_kwargs
+            )
+            # Fix parameters to those learned in step 1
+            res_all = am_all.fix(res_est.params)
+            
+            # Forecast from the very end of the data
+            fcast = res_all.forecast(horizon=forecast_horizon, reindex=False)
+        
+        st.success("Forecast generated successfully!")
+        
+        # ========================================
+        # Parameter Display
+        # ========================================
+        st.markdown("### Estimated Parameters (from In-Sample)")
+        params_df = res_est.params.to_frame("Coefficient")
+        params_df['Std Error'] = res_est.std_err
+        params_df['t-statistic'] = res_est.tvalues
+        params_df['p-value'] = res_est.pvalues
+        st.dataframe(params_df.style.format("{:.6f}"))
+
+        # ========================================
+        # Process Forecast Paths
+        # ========================================
+        mu_path = fcast.mean.values[-1, :]
+        sig2_path = fcast.variance.values[-1, :]
+        sig_path = np.sqrt(sig2_path)
+        
+        # Generate Future Dates
+        last_date = df['date'].iloc[-1]
+        forecast_dates = pd.date_range(
+            start=last_date + pd.Timedelta(days=1), 
+            periods=forecast_horizon, 
+            freq='B' # Business days
+        )
+        
+        # ========================================
+        # VaR & ES Calculation
+        # ========================================
+        params = res_est.params
+        dist_params = {}
+        
+        # Robust parameter extraction
+        if dist_choice == "Student's t":
+            dist_params["nu"] = params.get('nu', params.iloc[-1])
+        elif dist_choice == "Skewed Student's t":
+            dist_params["nu"] = params.get('nu', params.iloc[-2])
+            dist_params["lam"] = params.get('lambda', params.iloc[-1])
+        elif dist_choice == "GED":
+            dist_params["beta"] = params.get('nu', params.iloc[-1])
+            
+        z_var, z_es = es_standard(dist_choice, alpha, dist_params)
+        
+        var_path = np.abs(mu_path + sig_path * z_var)
+        es_path = np.abs(mu_path + sig_path * z_es)
+        
+        # ========================================
+        # Visualization
+        # ========================================
+        st.markdown(f"### Forecast: Next {forecast_horizon} Days")
+        
+        tab1, tab2, tab3 = st.tabs(["Volatility & Return", "Risk Metrics", "Raw Data"])
+        
+        with tab1:
+            fig = go.Figure()
+            # History (Last 100 days for clarity)
+            subset = df.iloc[-100:]
+            fig.add_trace(go.Scatter(x=subset['date'], y=subset['log_return'], 
+                                     line=dict(color='gray', width=1), name='Recent History'))
+            
+            # Forecast Mean
+            fig.add_trace(go.Scatter(x=forecast_dates, y=mu_path, 
+                                     line=dict(color='blue', width=2), name='Forecast Mean'))
+            
+            # Forecast Volatility (Confidence Interval style)
+            # Upper/Lower bands for volatility visual (mean +/- 2 sigma)
+            upper = mu_path + 2*sig_path
+            lower = mu_path - 2*sig_path
+            
+            fig.add_trace(go.Scatter(x=forecast_dates, y=upper, mode='lines', 
+                                     line=dict(width=0), showlegend=False))
+            fig.add_trace(go.Scatter(x=forecast_dates, y=lower, mode='lines', 
+                                     line=dict(width=0), fill='tonexty', 
+                                     fillcolor='rgba(0,0,255,0.1)', name='2σ Volatility Band'))
+            
+            fig.update_layout(title="Return Forecast with Volatility Bands", 
+                              xaxis_title="Date", yaxis_title="Log Return", template="plotly_white")
+            st.plotly_chart(fig, use_container_width=True)
+
+        with tab2:
+            fig_risk = go.Figure()
+            fig_risk.add_trace(go.Scatter(x=forecast_dates, y=var_path, 
+                                          mode='lines+markers', name=f'VaR {conf}%', line=dict(color='red')))
+            fig_risk.add_trace(go.Scatter(x=forecast_dates, y=es_path, 
+                                          mode='lines+markers', name=f'ES {conf}%', line=dict(color='orange', dash='dash')))
+            fig_risk.update_layout(title=f"Risk Forecast (Loss Magnitude)", 
+                                   xaxis_title="Date", yaxis_title="Loss", template="plotly_white")
+            st.plotly_chart(fig_risk, use_container_width=True)
+
+        with tab3:
+            results_df = pd.DataFrame({
+                "Date": forecast_dates,
+                "Forecast Mean": mu_path,
+                "Forecast Vol": sig_path,
+                f"VaR ({conf}%)": var_path,
+                f"ES ({conf}%)": es_path
+            })
+            st.dataframe(results_df)
+
+
+
+
+
+
+
 
 
 # --- 4. Main Application ---
@@ -854,7 +1813,6 @@ def main():
     elif selection == "Forecasting":
         show_forecasting(stock_data)
 
+
 if __name__ == "__main__":
     main()
-    
-    
