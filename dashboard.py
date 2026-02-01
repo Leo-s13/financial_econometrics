@@ -151,7 +151,6 @@ def show_stylized_facts(stock_data):
         # Display Detailed Table
         st.table(pd.DataFrame(adf_results).set_index("Company"))
 
-        # Professional Interpretation
         st.markdown(f"""
         <div class="interpretation-box">
         <strong>Interpretation:</strong><br>
@@ -412,7 +411,7 @@ def show_stylized_facts(stock_data):
                     yaxis_title="Correlation",
                     height=300,
                     margin=dict(l=20, r=20, t=40, b=20),
-                    yaxis=dict(range=[-0.05, 0.4]) # Adjusted range to show the persistent positive decay
+                    yaxis=dict(range=[-0.05, 0.4])
                 )
                 st.plotly_chart(fig_sq, width='stretch')
 
@@ -446,7 +445,7 @@ def show_stylized_facts(stock_data):
                 y=df['log_return']**2, 
                 name=name,
                 line=dict(color=colors[name], width=0.8),
-                fill='tozeroy', # Fills area to the x-axis for better visual "mass"
+                fill='tozeroy', 
                 fillcolor=f"rgba{tuple(int(colors[name].lstrip('#')[i:i+2], 16) for i in (0, 2, 4)) + (0.2,)}"
             ))
 
@@ -533,7 +532,7 @@ def show_stylized_facts(stock_data):
         x_range = np.linspace(-0.1, 0.1, 1000)
         fig_norm.add_trace(go.Scatter(
             x=x_range, 
-            y=stats.norm.pdf(x_range, 0, 0.02), # Using a standard sigma for visual reference
+            y=stats.norm.pdf(x_range, 0, 0.02), 
             name="Ideal Normal Dist.", 
             line=dict(color='black', width=3, dash='dot')
         ))
@@ -655,7 +654,6 @@ def get_pdf_value(x, dist_type, params):
         return stats.gennorm.pdf(x, beta=params[0])
     elif dist_type == "Skewed Student's t":
         eta, lam = params[0], params[1]
-        # Hansen (1994) Skewed T constants
         c = gamma((eta + 1) / 2) / (np.sqrt(np.pi * (eta - 2)) * gamma(eta / 2))
         a = 4 * lam * c * ((eta - 2) / (eta - 1))
         b = np.sqrt(1 + 3 * lam**2 - a**2)
@@ -669,7 +667,7 @@ def get_pdf_value(x, dist_type, params):
 
 
 # ==========================================
-# HELPER 2: Numerical ES Calculation (FIXED)
+# HELPER 2: Numerical ES Calculation 
 # ==========================================
 def calculate_es_numerical(dist_type, params, alpha):
     # Determine the VaR cutoff (q_stat) for integration
@@ -686,7 +684,6 @@ def calculate_es_numerical(dist_type, params, alpha):
     def integrand(x):
         return x * get_pdf_value(x, dist_type, params)
     
-    # Use -20 instead of -100 for better stability in numerical integration
     integral, _ = quad(integrand, -20, q_stat, limit=50)
     return integral / alpha
 
@@ -697,24 +694,24 @@ def get_dist_and_params_from_fit(result, dist_type):
     for use with get_pdf_value / calculate_es_numerical.
     Returns (arch_dist_name, params_for_helpers).
     """
-    p = result.params  # pandas Series with named parameters
+    p = result.params 
 
     if dist_type == "Normal":
-        # arch uses 'normal'
-        return "normal", []  # no extra params for standard normal
+
+        return "normal", [] 
 
     elif dist_type == "Student's t":
-        # arch 't' distribution; df parameter usually named 'nu'
+
         df = float(p.get("nu", p[-1]))
         return "t", [df]
 
     elif dist_type == "GED":
-        # arch 'ged' distribution; shape parameter also often called 'nu'
+
         beta = float(p.get("nu", p[-1]))
         return "ged", [beta]
 
     elif dist_type == "Skewed Student's t":
-        # arch 'skewt' distribution; parameters 'nu' and 'lambda'
+
         eta = float(p.get("nu", p[-2]))
         lam = float(p.get("lambda", p[-1]))
         return "skewt", [eta, lam]
@@ -890,7 +887,7 @@ def show_risk_measures(stock_data):
     ])
 
     # ==========================================
-    # TAB 1: HISTORICAL SIMULATION (unchanged)
+    # TAB 1: HISTORICAL SIMULATION 
     # ==========================================
     with risk_tabs[0]:
         st.subheader("Historical Simulation (HS)")
@@ -954,7 +951,7 @@ def show_risk_measures(stock_data):
 
             fig_hs.update_layout(height=1000, showlegend=False)
             st.plotly_chart(fig_hs, use_container_width=True)
-            st.success("✅ Historical Simulation completed!")
+            st.success("Historical Simulation completed!")
 
     # ==========================================
     # TAB 2: GARCH MODEL COMPARISON
@@ -1072,7 +1069,7 @@ def show_risk_measures(stock_data):
         # --- Estimation Action ---
         if st.button("Estimate Selected Models", type="primary", key="estimate_all"):
         
-            returns_est = returns.iloc[estimation_indices]  # Changed from returns.iloc[:estimation_window]
+            returns_est = returns.iloc[estimation_indices]  
         
             # Data preprocessing and validation
             if len(returns_est) < 100:
@@ -1101,7 +1098,7 @@ def show_risk_measures(stock_data):
                     progress_bar.progress(int(idx / total_models * 100))
 
                     try:
-                        # KEY FIX: Use rescale=True for automatic data scaling
+
                         am = arch_model(
                             returns_demeaned,
                             vol=model_config['vol'],
@@ -1110,14 +1107,14 @@ def show_risk_measures(stock_data):
                             q=model_config['q'],
                             mean='Constant',
                             dist=dist_config,
-                            rescale=True  # CRITICAL: Allow automatic rescaling
+                            rescale=True 
                         )
 
-                        # Fit with better options
+                        
                         result = am.fit(
                             disp='off',
                             show_warning=False,
-                            options={'maxiter': 1000}  # Allow more iterations
+                            options={'maxiter': 1000} 
                         )
                         
                         # Validate estimation results
@@ -1158,10 +1155,10 @@ def show_risk_measures(stock_data):
             status_text.empty()
 
             if len(all_results) == 0:
-                st.error("❌ No models successfully estimated. Check your data and settings.")
+                st.error("No models successfully estimated. Check your data and settings.")
                 st.stop()
 
-            st.success(f"✅ Successfully estimated {len(all_results)} models.")
+            st.success(f"Successfully estimated {len(all_results)} models.")
 
             # Store in session state
             st.session_state['garch_results'] = all_results
@@ -1350,7 +1347,7 @@ def show_risk_measures(stock_data):
                 )
             
             with col_f2:
-                st.write("") # Vertical align spacer
+                st.write("") 
                 st.write("") 
                 use_this_model = st.button(
                     f"Set Model & Generate Forecast",
@@ -1376,7 +1373,7 @@ def show_risk_measures(stock_data):
                     total_iterations = n_total - rolling_window
                     forecast_results = []
 
-                    # Scaling for numerical stability
+              
                     scaling_factor = 100
                     returns_scaled = returns * scaling_factor
 
@@ -1512,12 +1509,12 @@ def es_standard(dist_type, alpha, params):
         return q, es
 
     elif dist_type == "Skewed Student's t":
-        # Hansen (1994) skewed t: ES numeric on standardized variable
+
         from scipy.integrate import quad
         nu = params["nu"]
         lam = params["lam"]
 
-        # constants for Hansen skew-t (as in your HS helper)
+
         from math import gamma, sqrt, pi
         c = gamma((nu + 1) / 2) / (sqrt(pi * (nu - 2)) * gamma(nu / 2))
         a = 4 * lam * c * ((nu - 2) / (nu - 1))
@@ -1584,7 +1581,6 @@ def show_forecasting(stock_data):
             )
         with col_b:
             df = stock_data[series_name][['date', 'log_return']].dropna().reset_index(drop=True)
-            # Ensure date is datetime
             df['date'] = pd.to_datetime(df['date'])
             st.metric("Observations", f"{len(df):,}")
         
@@ -1637,8 +1633,8 @@ def show_forecasting(stock_data):
     run_forecast = st.button("Estimate & Forecast Future", type="primary", use_container_width=True)
     
     if run_forecast:
-        returns_est = est_data['log_return'] # Training data
-        returns_all = df['log_return']       # Full data for projection
+        returns_est = est_data['log_return'] 
+        returns_all = df['log_return']    
         
         # Map distribution
         dist_map = {
@@ -1745,7 +1741,7 @@ def show_forecasting(stock_data):
         
         with tab1:
             fig = go.Figure()
-            # History (Last 100 days for clarity)
+
             subset = df.iloc[-100:]
             fig.add_trace(go.Scatter(x=subset['date'], y=subset['log_return'], 
                                      line=dict(color='gray', width=1), name='Recent History'))
