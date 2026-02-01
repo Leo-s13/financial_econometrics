@@ -366,7 +366,49 @@ code {
 </head>
 
 <body>
-    
+    <h1 id="financial-econometrics-dashboard">Financial Econometrics Dashboard</h1>
+<p>Econometric analysis of stock price volatility using GARCH models for Goldman Sachs, Bank of America, and MetLife.</p>
+<h2 id="features">Features</h2>
+<ul>
+<li>Stylized facts analysis (stationarity, heavy tails, volatility clustering, leverage effects)</li>
+<li>GARCH family models (GARCH, GJR-GARCH, EGARCH)</li>
+<li>Risk measures (VaR and Expected Shortfall)</li>
+</ul>
+<h2 id="quick-start">Quick Start</h2>
+<h3 id="prerequisites">Prerequisites</h3>
+<ul>
+<li>Python 3.11</li>
+<li>pip</li>
+</ul>
+<h3 id="installation">Installation</h3>
+<pre class="hljs"><code><div><span class="hljs-comment"># Clone repository</span>
+git <span class="hljs-built_in">clone</span> https://github.com/Leo-s13/financial_econometrics.git
+<span class="hljs-built_in">cd</span> financial_econometrics
+
+<span class="hljs-comment"># Create virtual environment</span>
+python -m venv venv
+<span class="hljs-built_in">source</span> venv/bin/activate  <span class="hljs-comment"># On Windows: venv\Scripts\activate</span>
+
+<span class="hljs-comment"># Install dependencies</span>
+pip install -r requirements.txt
+
+<span class="hljs-comment"># Run application</span>
+streamlit run dashboard.py
+</div></code></pre>
+<p>The app will open at <code>http://localhost:8501</code></p>
+<h2 id="dependencies">Dependencies</h2>
+<ul>
+<li>streamlit</li>
+<li>pandas, numpy</li>
+<li>plotly, matplotlib, seaborn</li>
+<li>statsmodels, arch</li>
+<li>openpyxl</li>
+</ul>
+<h2 id="troubleshooting">Troubleshooting</h2>
+<p><strong>Module errors:</strong></p>
+<pre class="hljs"><code><div>pip install -r requirements.txt --upgrade
+</div></code></pre>
+
 </body>
 
 </html>
