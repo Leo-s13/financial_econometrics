@@ -1784,53 +1784,53 @@ def show_forecasting(stock_data):
                 f"ES ({conf}%)": es_path
             })
             st.dataframe(results_df)
-            
-st.markdown("""
-#Interpretation and Notes:
+                
+    st.markdown("""
+    #Interpretation and Notes:
 
-## Evolution of Market Risk Over Time
+    ## Evolution of Market Risk Over Time
 
-All three time series exhibit **time-varying behavior** that reflects changing market conditions:
+    All three time series exhibit **time-varying behavior** that reflects changing market conditions:
 
-- **Crisis Periods**: Elevated volatility during the 2008 financial crisis and 2020 pandemic indicate heightened sensitivity to market movements
-- **Calm Periods**: More stable and lower volatility estimates during normal market conditions
-- **Business Cycles**: The alternating pattern reflects the dynamic nature of financial markets
+    - **Crisis Periods**: Elevated volatility during the 2008 financial crisis and 2020 pandemic indicate heightened sensitivity to market movements
+    - **Calm Periods**: More stable and lower volatility estimates during normal market conditions
+    - **Business Cycles**: The alternating pattern reflects the dynamic nature of financial markets
 
-## Impact of Estimation Window Size
+    ## Impact of Estimation Window Size
 
-The choice of estimation window affects the results as follows:
+    The choice of estimation window affects the results as follows:
 
-### Smaller Windows (e.g., 250 observations)
-- Produce more **volatile estimates**
-- **Quickly adapt** to regime changes and recent market conditions
-- Higher responsiveness but less stability
+    ### Smaller Windows (e.g., 250 observations)
+    - Produce more **volatile estimates**
+    - **Quickly adapt** to regime changes and recent market conditions
+    - Higher responsiveness but less stability
 
-### Larger Windows (e.g., 500-1000 observations)
-- Generate **smoother trajectories**
-- **Delayed response** to structural breaks
-- Greater stability but slower adaptation
+    ### Larger Windows (e.g., 500-1000 observations)
+    - Generate **smoother trajectories**
+    - **Delayed response** to structural breaks
+    - Greater stability but slower adaptation
 
-This trade-off explains why parameters estimated during one market regime may poorly predict risk in subsequent periods, particularly when transitioning from calm to stress conditions. Therefore doing forecasts on the whole sample with fixed parameters (as above) may not capture evolving risk dynamics effectively.
+    This trade-off explains why parameters estimated during one market regime may poorly predict risk in subsequent periods, particularly when transitioning from calm to stress conditions. Therefore doing forecasts on the whole sample with fixed parameters (as above) may not capture evolving risk dynamics effectively.
 
-## Comparison Across the three Institutions
+    ## Comparison Across the three Institutions
 
-### During Systemic Crises
-- Systematic risk increases across the board regardless of business models
-- when there is trouble all are affected
+    ### During Systemic Crises
+    - Systematic risk increases across the board regardless of business models
+    - when there is trouble all are affected
 
-### During Normal Periods
-- Each institution type exhibits similar baseline volatility levels. A deeper analysis is in the Overview tab
+    ### During Normal Periods
+    - Each institution type exhibits similar baseline volatility levels. A deeper analysis is in the Overview tab
 
-## Consistency with Past Events
+    ## Consistency with Past Events
 
-The observed patterns align with major historical events:
-- Sharp increases during the 2008 financial crisis
-- Volatility spikes in March 2020 (COVID-19 market turmoil)
-- Gradual stabilization during recovery periods
+    The observed patterns align with major historical events:
+    - Sharp increases during the 2008 financial crisis
+    - Volatility spikes in March 2020 (COVID-19 market turmoil)
+    - Gradual stabilization during recovery periods
 
----
+    ---
 
-""")
+    """)
 
 
 
